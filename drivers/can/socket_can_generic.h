@@ -25,15 +25,21 @@
 CAN_DEFINE_MSGQ(socket_can_msgq, 5);
 K_KERNEL_STACK_DEFINE(rx_thread_stack, RX_THREAD_STACK_SIZE);
 
-struct socket_can_context {
-	const struct device *can_dev;
-	struct net_if *iface;
-	struct k_msgq *msgq;
+#include "socket_can_context.h"
 
-	/* TODO: remove the thread and push data to net directly from rx isr */
-	k_tid_t rx_tid;
-	struct k_thread rx_thread_data;
-};
+// struct socket_can_context {
+// 	const struct device *can_dev;
+// 	struct net_if *iface;
+// 	struct k_msgq *msgq;
+
+//     /* for actual can device */
+//     const char *if_name;
+// 	int dev_fd;
+
+// 	/* TODO: remove the thread and push data to net directly from rx isr */
+// 	k_tid_t rx_tid;
+// 	struct k_thread rx_thread_data;
+// };
 
 static inline void socket_can_iface_init(struct net_if *iface)
 {

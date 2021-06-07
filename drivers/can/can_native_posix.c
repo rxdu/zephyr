@@ -35,51 +35,49 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 #include <net/socket_can.h>
 
 #include "can_native_posix_priv.h"
+#include "socket_can_context.h"
 
 #define NET_BUF_TIMEOUT K_MSEC(100)
 
-struct canbus_np_context {
-	const struct device *can_dev;
-	struct k_msgq *msgq;
-	struct net_if *iface;
-	const char *if_name;
-
-	int dev_fd;
-	struct can_frame frame;
-};
-
-static int read_data(struct canbus_np_context *ctx, int fd)
+static int read_data(struct socket_can_context *ctx, int fd)
 {
-	struct net_pkt *pkt;
+	// struct net_pkt *pkt;
 	int count;
+    struct can_frame frame;
 
-	count = canbus_np_read_data(fd, (void *)(&ctx->frame),
-				    sizeof(ctx->frame));
+	count = canbus_np_read_data(fd, (void *)(&frame),
+				    sizeof(frame));
 	if (count <= 0) {
 		return 0;
 	}
 
 	struct zcan_frame zframe;
-	can_copy_frame_to_zframe(&ctx->frame, &zframe);
-	pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, sizeof(zframe), AF_CAN,
-					   0, NET_BUF_TIMEOUT);
-	if (!pkt) {
-		return -ENOMEM;
-	}
+	can_copy_frame_to_zframe(&frame, &zframe);
+	// pkt = net_pkt_rx_alloc_with_buffer(ctx->iface, sizeof(zframe), AF_CAN,
+	// 				   0, NET_BUF_TIMEOUT);
+	// if (!pkt) {
+	// 	return -ENOMEM;
+	// }
 
-	if (net_pkt_write(pkt, (void *)(&zframe), sizeof(zframe))) {
-		net_pkt_unref(pkt);
-		return -ENOBUFS;
-	}
+	// if (net_pkt_write(pkt, (void *)(&zframe), sizeof(zframe))) {
+	// 	net_pkt_unref(pkt);
+	// 	return -ENOBUFS;
+	// }
 
-	if (net_recv_data(ctx->iface, pkt) < 0) {
-		net_pkt_unref(pkt);
-	}
+	// if (net_recv_data(ctx->iface, pkt) < 0) {
+	// 	net_pkt_unref(pkt);
+	// }
+
+    /* send data to consumers */
+    while (k_msgq_put(ctx->msgq, &zframe, K_NO_WAIT) != 0) {
+        /* message queue is full: purge old data & try again */
+        k_msgq_purge(ctx->msgq);
+    }
 
 	return 0;
 }
 
-static void canbus_np_rx(struct canbus_np_context *ctx)
+static void canbus_np_rx(struct socket_can_context *ctx)
 {
 	LOG_DBG("Starting ZCAN RX thread");
 
@@ -98,7 +96,7 @@ static int canbus_np_send(const struct device *dev,
 			  const struct zcan_frame *msg, k_timeout_t timeout,
 			  can_tx_callback_t callback_isr, void *callback_arg)
 {
-	struct canbus_np_context *ctx = dev->data;
+	struct socket_can_context *ctx = dev->data;
 	int ret = -ENODEV;
 
 	ARG_UNUSED(timeout);
@@ -165,11 +163,11 @@ static const struct can_driver_api can_api_funcs = {
 K_KERNEL_STACK_DEFINE(canbus_rx_stack1,
 		      CONFIG_ARCH_POSIX_RECOMMENDED_STACK_SIZE);
 static struct k_thread rx_thread_data1;
-static struct canbus_np_context canbus_context_data1;
+static struct socket_can_context canbus_context_data1;
 
 static int canbus_np1_init(const struct device *dev)
 {
-	struct canbus_np_context *ctx = dev->data;
+	struct socket_can_context *ctx = dev->data;
 
 	ctx->if_name = CONFIG_CAN_NATIVE_POSIX_INTERFACE_1_NAME;
 
@@ -197,11 +195,11 @@ DEVICE_DT_INST_DEFINE(0, &canbus_np1_init, NULL,
 K_KERNEL_STACK_DEFINE(canbus_rx_stack2,
 		      CONFIG_ARCH_POSIX_RECOMMENDED_STACK_SIZE);
 static struct k_thread rx_thread_data2;
-static struct canbus_np_context canbus_context_data2;
+static struct socket_can_context canbus_context_data2;
 
 static int canbus_np2_init(const struct device *dev)
 {
-	struct canbus_np_context *ctx = dev->data;
+	struct socket_can_context *ctx = dev->data;
 
 	ctx->if_name = CONFIG_CAN_NATIVE_POSIX_INTERFACE_2_NAME;
 
@@ -230,106 +228,125 @@ DEVICE_DT_INST_DEFINE(1, &canbus_np2_init, NULL,
 
 #if defined(CONFIG_NET_SOCKETS_CAN)
 
-#define SEND_TIMEOUT K_MSEC(100)
-#define BUF_ALLOC_TIMEOUT K_MSEC(50)
+#include "socket_can_generic.h"
 
-static void socket_can_iface_init(struct net_if *iface)
-{
-	const struct device *dev = net_if_get_device(iface);
-	struct canbus_np_context *socket_context = dev->data;
+// #define SEND_TIMEOUT K_MSEC(100)
+// #define BUF_ALLOC_TIMEOUT K_MSEC(50)
 
-	socket_context->iface = iface;
+// static void socket_can_iface_init(struct net_if *iface)
+// {
+// 	const struct device *dev = net_if_get_device(iface);
+// 	struct socket_can_context *socket_context = dev->data;
 
-	LOG_DBG("Init CAN interface %p dev %p", iface, dev);
-}
+// 	socket_context->iface = iface;
 
-static void tx_irq_callback(uint32_t error_flags, void *arg)
-{
-	if (error_flags) {
-		LOG_DBG("Callback! error-code: %d", error_flags);
-	}
-}
+// 	LOG_DBG("Init CAN interface %p dev %p", iface, dev);
+// }
 
-/* This is called by net_if.c when packet is about to be sent */
-static int socket_can_send(const struct device *dev, struct net_pkt *pkt)
-{
-	struct canbus_np_context *socket_context = dev->data;
-	int ret;
+// static void tx_irq_callback(uint32_t error_flags, void *arg)
+// {
+// 	if (error_flags) {
+// 		LOG_DBG("Callback! error-code: %d", error_flags);
+// 	}
+// }
 
-	if (net_pkt_family(pkt) != AF_CAN) {
-		return -EPFNOSUPPORT;
-	}
+// /* This is called by net_if.c when packet is about to be sent */
+// static int socket_can_send(const struct device *dev, struct net_pkt *pkt)
+// {
+// 	struct socket_can_context *socket_context = dev->data;
+// 	int ret;
 
-	ret = can_send(socket_context->can_dev,
-		       (struct zcan_frame *)pkt->frags->data, SEND_TIMEOUT,
-		       tx_irq_callback, NULL);
-	if (ret) {
-		LOG_DBG("Cannot send socket CAN msg (%d)", ret);
-	}
+// 	if (net_pkt_family(pkt) != AF_CAN) {
+// 		return -EPFNOSUPPORT;
+// 	}
 
-	/* If something went wrong, then we need to return negative value to
-	 * net_if.c:net_if_tx() so that the net_pkt will get released.
-	 */
-	return -ret;
-}
+// 	ret = can_send(socket_context->can_dev,
+// 		       (struct zcan_frame *)pkt->frags->data, SEND_TIMEOUT,
+// 		       tx_irq_callback, NULL);
+// 	if (ret) {
+// 		LOG_DBG("Cannot send socket CAN msg (%d)", ret);
+// 	}
 
-static int socket_can_setsockopt(const struct device *dev, void *obj, int level,
-				 int optname, const void *optval,
-				 socklen_t optlen)
-{
-	struct canbus_np_context *socket_context = dev->data;
-	struct can_filter filter;
+// 	/* If something went wrong, then we need to return negative value to
+// 	 * net_if.c:net_if_tx() so that the net_pkt will get released.
+// 	 */
+// 	return -ret;
+// }
 
-	if (level != SOL_CAN_RAW && optname != CAN_RAW_FILTER) {
-		errno = EINVAL;
-		return -1;
-	}
+// static int socket_can_setsockopt(const struct device *dev, void *obj, int level,
+// 				 int optname, const void *optval,
+// 				 socklen_t optlen)
+// {
+// 	struct socket_can_context *socket_context = dev->data;
+// 	struct can_filter filter;
 
-	/* Our userspace can send either zcan_filter or can_filter struct.
-	 * They are different sizes so we need to convert them if needed.
-	 */
-	if (optlen != sizeof(struct can_filter) &&
-	    optlen != sizeof(struct zcan_filter)) {
-		errno = EINVAL;
-		return -1;
-	}
+// 	if (level != SOL_CAN_RAW && optname != CAN_RAW_FILTER) {
+// 		errno = EINVAL;
+// 		return -1;
+// 	}
 
-	if (optlen == sizeof(struct zcan_filter)) {
-		can_copy_zfilter_to_filter((struct zcan_filter *)optval,
-					   &filter);
-	} else {
-		memcpy(&filter, optval, sizeof(filter));
-	}
+// 	/* Our userspace can send either zcan_filter or can_filter struct.
+// 	 * They are different sizes so we need to convert them if needed.
+// 	 */
+// 	if (optlen != sizeof(struct can_filter) &&
+// 	    optlen != sizeof(struct zcan_filter)) {
+// 		errno = EINVAL;
+// 		return -1;
+// 	}
 
-	return canbus_np_setsockopt(socket_context->dev_fd, level, optname,
-				    &filter, sizeof(filter));
-}
+// 	if (optlen == sizeof(struct zcan_filter)) {
+// 		can_copy_zfilter_to_filter((struct zcan_filter *)optval,
+// 					   &filter);
+// 	} else {
+// 		memcpy(&filter, optval, sizeof(filter));
+// 	}
 
-static void socket_can_close(const struct device *dev, int filter_id)
-{
-	struct canbus_np_context *socket_context = dev->data;
+// 	return canbus_np_setsockopt(socket_context->dev_fd, level, optname,
+// 				    &filter, sizeof(filter));
+// }
 
-	can_detach(socket_context->can_dev, filter_id);
-}
+// static void socket_can_close(const struct device *dev, int filter_id)
+// {
+// 	struct socket_can_context *socket_context = dev->data;
 
-static struct canbus_api socket_can_api = {
-	.iface_api.init = socket_can_iface_init,
-	.send = socket_can_send,
-	.close = socket_can_close,
-	.setsockopt = socket_can_setsockopt,
-};
+// 	can_detach(socket_context->can_dev, filter_id);
+// }
+
+// static struct canbus_api socket_can_api = {
+// 	.iface_api.init = socket_can_iface_init,
+// 	.send = socket_can_send,
+// 	.close = socket_can_close,
+// 	.setsockopt = socket_can_setsockopt,
+// };
 
 #ifdef CONFIG_CAN_NATIVE_POSIX_INTERFACE_1_ENABLE
-// static struct socket_can_context socket_can_context_1;
+CAN_DEFINE_MSGQ(socket_can_msgq1, 5);
+K_KERNEL_STACK_DEFINE(rx_thread_stack1, RX_THREAD_STACK_SIZE);
+
 static int socket_can_init_1(const struct device *dev)
 {
-	const struct device *can_dev = DEVICE_DT_INST_GET(0);
-	struct canbus_np_context *socket_context = dev->data;
+	// const struct device *can_dev = DEVICE_DT_INST_GET(0);
+	// struct socket_can_context *socket_context = dev->data;
 
-	LOG_DBG("Init socket CAN device %p (%s) for dev %p (%s)", dev,
-		dev->name, can_dev, can_dev->name);
+	// LOG_DBG("Init socket CAN device %p (%s) for dev %p (%s)", dev,
+	// 	dev->name, can_dev, can_dev->name);
+
+	// socket_context->can_dev = can_dev;
+    const struct device *can_dev = DEVICE_DT_GET(DT_NODELABEL(can1));
+	struct socket_can_context *socket_context = dev->data;
+
+	LOG_DBG("Init socket CAN device %p (%s) for dev %p (%s)",
+		dev, dev->name, can_dev, can_dev->name);
 
 	socket_context->can_dev = can_dev;
+	socket_context->msgq = &socket_can_msgq1;
+
+	socket_context->rx_tid =
+		k_thread_create(&socket_context->rx_thread_data,
+				rx_thread_stack1,
+				K_KERNEL_STACK_SIZEOF(rx_thread_stack1),
+				rx_thread, socket_context, NULL, NULL,
+				RX_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	return 0;
 }
@@ -343,15 +360,34 @@ NET_DEVICE_INIT_INSTANCE(socket_can_native_posix_1,
 #endif /* CONFIG_CAN_NATIVE_POSIX_INTERFACE_1_ENABLE */
 
 #ifdef CONFIG_CAN_NATIVE_POSIX_INTERFACE_2_ENABLE
+CAN_DEFINE_MSGQ(socket_can_msgq2, 5);
+K_KERNEL_STACK_DEFINE(rx_thread_stack2, RX_THREAD_STACK_SIZE);
+
 static int socket_can_init_2(const struct device *dev)
 {
-	const struct device *can_dev = DEVICE_DT_INST_GET(1);
-	struct canbus_np_context *socket_context = dev->data;
+	// const struct device *can_dev = DEVICE_DT_INST_GET(1);
+	// struct socket_can_context *socket_context = dev->data;
 
-	LOG_DBG("Init socket CAN device %p (%s) for dev %p (%s)", dev,
-		dev->name, can_dev, can_dev->name);
+	// LOG_DBG("Init socket CAN device %p (%s) for dev %p (%s)", dev,
+	// 	dev->name, can_dev, can_dev->name);
+
+	// socket_context->can_dev = can_dev;
+
+    const struct device *can_dev = DEVICE_DT_GET(DT_NODELABEL(can1));
+	struct socket_can_context *socket_context = dev->data;
+
+	LOG_DBG("Init socket CAN device %p (%s) for dev %p (%s)",
+		dev, dev->name, can_dev, can_dev->name);
 
 	socket_context->can_dev = can_dev;
+	socket_context->msgq = &socket_can_msgq2;
+
+	socket_context->rx_tid =
+		k_thread_create(&socket_context->rx_thread_data,
+				rx_thread_stack2,
+				K_KERNEL_STACK_SIZEOF(rx_thread_stack2),
+				rx_thread, socket_context, NULL, NULL,
+				RX_THREAD_PRIORITY, 0, K_NO_WAIT);
 
 	return 0;
 }
