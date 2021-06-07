@@ -273,37 +273,37 @@ DEVICE_DT_INST_DEFINE(1, &canbus_np2_init, NULL,
 // 	return -ret;
 // }
 
-// static int socket_can_setsockopt(const struct device *dev, void *obj, int level,
-// 				 int optname, const void *optval,
-// 				 socklen_t optlen)
-// {
-// 	struct socket_can_context *socket_context = dev->data;
-// 	struct can_filter filter;
+static int socket_can_np_setsockopt(const struct device *dev, void *obj, int level,
+				 int optname, const void *optval,
+				 socklen_t optlen)
+{
+	struct socket_can_context *socket_context = dev->data;
+	struct can_filter filter;
 
-// 	if (level != SOL_CAN_RAW && optname != CAN_RAW_FILTER) {
-// 		errno = EINVAL;
-// 		return -1;
-// 	}
+	if (level != SOL_CAN_RAW && optname != CAN_RAW_FILTER) {
+		errno = EINVAL;
+		return -1;
+	}
 
-// 	/* Our userspace can send either zcan_filter or can_filter struct.
-// 	 * They are different sizes so we need to convert them if needed.
-// 	 */
-// 	if (optlen != sizeof(struct can_filter) &&
-// 	    optlen != sizeof(struct zcan_filter)) {
-// 		errno = EINVAL;
-// 		return -1;
-// 	}
+	/* Our userspace can send either zcan_filter or can_filter struct.
+	 * They are different sizes so we need to convert them if needed.
+	 */
+	if (optlen != sizeof(struct can_filter) &&
+	    optlen != sizeof(struct zcan_filter)) {
+		errno = EINVAL;
+		return -1;
+	}
 
-// 	if (optlen == sizeof(struct zcan_filter)) {
-// 		can_copy_zfilter_to_filter((struct zcan_filter *)optval,
-// 					   &filter);
-// 	} else {
-// 		memcpy(&filter, optval, sizeof(filter));
-// 	}
+	if (optlen == sizeof(struct zcan_filter)) {
+		can_copy_zfilter_to_filter((struct zcan_filter *)optval,
+					   &filter);
+	} else {
+		memcpy(&filter, optval, sizeof(filter));
+	}
 
-// 	return canbus_np_setsockopt(socket_context->dev_fd, level, optname,
-// 				    &filter, sizeof(filter));
-// }
+	return canbus_np_setsockopt(socket_context->dev_fd, level, optname,
+				    &filter, sizeof(filter));
+}
 
 // static void socket_can_close(const struct device *dev, int filter_id)
 // {
@@ -312,12 +312,12 @@ DEVICE_DT_INST_DEFINE(1, &canbus_np2_init, NULL,
 // 	can_detach(socket_context->can_dev, filter_id);
 // }
 
-// static struct canbus_api socket_can_api = {
-// 	.iface_api.init = socket_can_iface_init,
-// 	.send = socket_can_send,
-// 	.close = socket_can_close,
-// 	.setsockopt = socket_can_setsockopt,
-// };
+static struct canbus_api socket_can_np_api = {
+	.iface_api.init = socket_can_iface_init,
+	.send = socket_can_send,
+	.close = socket_can_close,
+	.setsockopt = socket_can_np_setsockopt,
+};
 
 #ifdef CONFIG_CAN_NATIVE_POSIX_INTERFACE_1_ENABLE
 CAN_DEFINE_MSGQ(socket_can_msgq1, 5);
@@ -355,7 +355,7 @@ NET_DEVICE_INIT_INSTANCE(socket_can_native_posix_1,
 			CONFIG_CAN_NATIVE_POSIX_INTERFACE_1_SOCKETCAN_NAME, 0,
 			socket_can_init_1, NULL,
 			&canbus_context_data1, NULL,
-			CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &socket_can_api,
+			CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &socket_can_np_api,
 			CANBUS_RAW_L2, NET_L2_GET_CTX_TYPE(CANBUS_RAW_L2), CAN_MTU);
 #endif /* CONFIG_CAN_NATIVE_POSIX_INTERFACE_1_ENABLE */
 
@@ -396,7 +396,7 @@ NET_DEVICE_INIT_INSTANCE(socket_can_native_posix_2,
 			CONFIG_CAN_NATIVE_POSIX_INTERFACE_2_SOCKETCAN_NAME, 1,
 			socket_can_init_2, NULL,
 			&canbus_context_data2, NULL,
-			CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &socket_can_api,
+			CONFIG_KERNEL_INIT_PRIORITY_DEVICE, &socket_can_np_api,
 			CANBUS_RAW_L2, NET_L2_GET_CTX_TYPE(CANBUS_RAW_L2), CAN_MTU);
 #endif /* CONFIG_CAN_NATIVE_POSIX_INTERFACE_2_ENABLE */
 

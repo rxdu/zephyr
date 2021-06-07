@@ -127,8 +127,11 @@ static void rx_task(int *can_fd, int *do_close_period,
     memset(&frame, 0, sizeof(frame));
     addr_len = sizeof(can_addr);
 
+    printk("INFO: before\n");
     ret = recvfrom(fd, &frame, sizeof(struct can_frame), 0,
                    (struct sockaddr *)&can_addr, &addr_len);
+    printk("INFO: after\n");
+
     if (ret < 0) {
       printk("ERROR: [%d] Cannot receive CAN message (%d)\n", fd, -errno);
       continue;
@@ -317,8 +320,8 @@ void main(void) {
   k_sleep(K_SECONDS(2));
 
   /* Create TX and RX tasks */
-  (void)setup_tx_task1();
-  (void)setup_tx_task2();
+//   (void)setup_tx_task1();
+//   (void)setup_tx_task2();
   (void)setup_rx_task1();
-  (void)setup_rx_task2();
+//   (void)setup_rx_task2();
 }
